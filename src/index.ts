@@ -1,0 +1,7 @@
+export { Rascador, DEFAULT_BASE_URL } from "./client.ts"
+export type { RascadorOptions, ProductsResource, CategoriesResource, SourcesResource } from "./client.ts"
+export { RascadorError, isRascadorError } from "./errors.ts"
+export type { RascadorErrorCode, RascadorErrorInit } from "./errors.ts"
+export { PagePromise } from "./pagination.ts"
+export { VERSION } from "./version.ts"
+export type * from "./types.ts"
