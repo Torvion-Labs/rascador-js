@@ -176,6 +176,30 @@ describe("retries", () => {
     expect(calls).toHaveLength(2)
     vi.restoreAllMocks()
   })
+
+  it("retries a live call the gateway turned away before starting it", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0)
+    const { rascador, calls } = client([fail(503, "platform_busy", true), fail(429, "rate_limited", true), ok([])])
+    await expect(rascador.search({ q: "x" })).resolves.toBeDefined()
+    expect(calls).toHaveLength(3)
+    vi.restoreAllMocks()
+  })
+
+  it.each([
+    ["upstream_error", 502],
+    ["upstream_unavailable", 503],
+    ["upstream_timeout", 504],
+  ])("does not retry a live call that failed with %s - a browser may still be running", async (code, status) => {
+    const { rascador, calls } = client([fail(status, code, true), ok([])])
+    await expect(rascador.search({ q: "x" })).rejects.toMatchObject({ code })
+    expect(calls).toHaveLength(1)
+  })
+
+  it("does not retry a live call whose connection failed", async () => {
+    const { rascador, calls } = client([new TypeError("fetch failed"), ok([])])
+    await expect(rascador.search({ q: "x" })).rejects.toMatchObject({ code: "network_error" })
+    expect(calls).toHaveLength(1)
+  })
 })
 
 describe("timeouts and cancellation", () => {
