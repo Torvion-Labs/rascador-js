@@ -20,10 +20,23 @@ export const DEFAULT_BASE_URL = "https://api.rascador.store"
 
 /** Stored-data reads answer in well under a second. */
 const DEFAULT_TIMEOUT_MS = 30_000
-/** Live scrapes drive a real browser: 20-40s typical, up to ~90s for a product refresh. */
-const DEFAULT_LIVE_TIMEOUT_MS = 130_000
+/**
+ * Live scrapes drive a real browser: 20-40s typical. The ceiling is what the
+ * gateway allows: up to 15s waiting for a free browser on a busy source, then
+ * Back Market's 185s deadline (it solves a Cloudflare challenge in-browser).
+ * Giving up sooner abandons a call the gateway would still have answered.
+ */
+const DEFAULT_LIVE_TIMEOUT_MS = 210_000
 const DEFAULT_MAX_RETRIES = 2
 const MAX_BACKOFF_MS = 8_000
+
+/**
+ * The only errors a live call retries: the gateway turned it away before any
+ * browser started. Any other failure may have left a browser running upstream,
+ * and a retry would start another one on top of it - more load on a source
+ * that is already struggling, for an answer that is no more likely to come.
+ */
+const REFUSED_BEFORE_WORK: ReadonlySet<string> = new Set(["rate_limited", "platform_busy", "upstream_busy"])
 
 export interface RascadorOptions {
   /** Defaults to the `RASCADOR_API_KEY` environment variable where one exists. */
@@ -34,9 +47,13 @@ export interface RascadorOptions {
   source?: SourceId
   /** Timeout for stored-data calls. Default 30s. */
   timeoutMs?: number
-  /** Timeout for live calls (`search`, `products.get` with `refresh`). Default 130s. */
+  /** Timeout for live calls (`search`, `products.get` with `refresh`). Default 210s. */
   liveTimeoutMs?: number
-  /** Retries for errors the gateway marks retryable. Default 2. */
+  /**
+   * Retries for errors the gateway marks retryable. Default 2. Live calls
+   * retry only a refusal (busy, rate limited), never a failure that may have
+   * left a browser running.
+   */
   maxRetries?: number
   /** Custom fetch, e.g. for a proxy or tests. Defaults to the global `fetch`. */
   fetch?: typeof fetch
@@ -110,8 +127,9 @@ export class Rascador {
   }
 
   /**
-   * Live search on the source site. Slow (20–40s) and quota-heavy.
-   * Returns result cards; call `products.get` for full details.
+   * Live search on the source site. Slow (20–40s) and quota-heavy, but not
+   * rate limited: call it as often as your quota allows. Returns result
+   * cards; call `products.get` for full details.
    */
   search(params: SearchParams, options?: RequestOptions): Promise<Response<SearchHit[]>> {
     const { source, ...query } = params
@@ -134,6 +152,7 @@ export class Rascador {
         return await this.#once<T>(url, timeoutMs, spec.options?.signal)
       } catch (error) {
         if (!(error instanceof RascadorError) || !error.retryable || attempt >= maxRetries) throw error
+        if (spec.live && !REFUSED_BEFORE_WORK.has(error.code)) throw error
         await sleep(backoffMs(attempt, error.retryAfterSeconds), spec.options?.signal)
       }
     }

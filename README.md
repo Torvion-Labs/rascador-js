@@ -133,12 +133,18 @@ The full list is on [Errors & Limits](https://rascador.store/developers/errors).
 | Option | Default | Applies to |
 | --- | --- | --- |
 | `timeoutMs` | 30 000 | Stored-data calls. |
-| `liveTimeoutMs` | 130 000 | `search` and `products.get(id, { refresh: true })`. |
-| `maxRetries` | 2 | Errors marked `retryable`, plus network failures. |
+| `liveTimeoutMs` | 210 000 | `search` and `products.get(id, { refresh: true })`. |
+| `maxRetries` | 2 | Errors marked `retryable`, plus network failures. Live calls: refusals only. |
 
-Retries use jittered exponential backoff and never wait less than `Retry-After`. Timeouts are
-not retried, because the scrape may still be running upstream. The gateway refunds quota on
-every 5xx, so a retried outage doesn't cost you twice.
+`search` has no rate limit: call it as often as your quota allows. Each call still costs quota,
+and when every browser on a source is busy the gateway waits briefly for one, then answers
+`upstream_busy` — which the SDK retries after the `Retry-After` it gives.
+
+Retries use jittered exponential backoff and never wait less than `Retry-After`. A live call
+retries only when the gateway turned it away before starting (`upstream_busy`, `platform_busy`,
+`rate_limited`); any other failure, a timeout included, may have left a browser running upstream,
+and a retry would start another on top of it. The gateway refunds quota on every 5xx and every
+refusal, so a retried outage doesn't cost you twice.
 
 Every method also takes per-call options:
 
@@ -155,7 +161,7 @@ new Rascador({
   baseUrl: "https://api.rascador.store",
   source: "shein",
   timeoutMs: 30_000,
-  liveTimeoutMs: 130_000,
+  liveTimeoutMs: 210_000,
   maxRetries: 2,
   fetch: customFetch, // proxies, tests, instrumentation
   headers: { "x-trace-id": "…" },
